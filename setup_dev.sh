@@ -154,17 +154,10 @@ if ask "Install mise and use it to install fzf?"; then
     eval "$(mise activate bash)"
   fi
 
-  # Ensure mise activate is in .zshrc
-  MISE_LINE='eval "$(~/.local/bin/mise activate zsh)"'
-  if ! grep -qF "$MISE_LINE" "$HOME/.zshrc" 2>/dev/null; then
-    echo "$MISE_LINE" >> "$HOME/.zshrc"
-    info "Added mise activation to ~/.zshrc"
-  fi
-
   # Install latest fzf via mise
   info "Installing fzf via mise..."
   try_cmd mise use -g fzf@latest
-  success "fzf installed via mise."
+  success "fzf installed via mise. Ctrl+R, Ctrl+T and Alt+C will work once .zshrc is deployed."
 else
   warn "Skipped mise + fzf."
 fi

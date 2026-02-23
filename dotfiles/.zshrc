@@ -139,6 +139,11 @@ zle_highlight+=(paste:none)
 # Setup zoxide as a replacement for cd
 if [[ -x $(command -v zoxide) ]]; then eval "$(zoxide init --cmd cd zsh)"; fi
 
+# mise version manager — must come before fzf so mise-managed tools are on PATH
+if [[ -f "$HOME/.local/bin/mise" ]]; then
+  eval "$($HOME/.local/bin/mise activate zsh)"
+fi
+
 # Setup fuzzy finder
 export FZF_DEFAULT_OPTS=" \
 --color=bg+:#424762,spinner:#b0bec5,hl:#f78c6c \
