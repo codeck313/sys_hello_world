@@ -284,28 +284,38 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
     sudo apt -y install nvidia-container-toolkit
 
     if [[ "$DOCKER_MODE" == "2" ]]; then
-      # Rootless mode
+      # ── Rootless Docker ───────────────────────────────────────────────────────
+      # Source: https://docs.docker.com/engine/security/rootless/
       # Source: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
-      info "Configuring NVIDIA runtime for rootless Docker..."
+
+      # Step 1: uidmap provides newuidmap/newgidmap, required for user namespaces
+      # info "Installing uidmap (required for rootless user namespaces)..."
+      # sudo apt -y install uidmap
+
+      # Step 2: disable the system-wide Docker daemon so it doesn't conflict
+      info "Disabling system-wide Docker daemon (rootless runs its own)..."
+      try_cmd sudo systemctl disable --now docker.service docker.socket
+
+      # Step 3: run the rootless installer as the current user (no sudo)
+      # This sets up a user-level systemd service and creates the rootless socket
+      info "Running dockerd-rootless-setuptool.sh install..."
+      try_cmd dockerd-rootless-setuptool.sh install
+
+      # ── NVIDIA rootless steps ─────────────────────────────────────────────────
+      # Step 4: configure the NVIDIA runtime without sudo — writes to user-space daemon.json
+      info "Configuring NVIDIA runtime for rootless Docker (no sudo)..."
       mkdir -p "$HOME/.config/docker"
-      nvidia-ctk runtime configure --runtime=docker \
+      try_cmd nvidia-ctk runtime configure --runtime=docker \
         --config="$HOME/.config/docker/daemon.json"
 
-      info "Disabling cgroups (required for rootless)..."
-      sudo nvidia-ctk config --set nvidia-container-cli.no-cgroups --in-place
-
+      # Step 5: restart the user-level Docker daemon to pick up the NVIDIA runtime
       info "Restarting rootless Docker daemon..."
       try_cmd systemctl --user restart docker
 
-      info "Enabling systemd linger for ${USER}..."
-      sudo loginctl enable-linger "$USER"
+      # Step 6: disable cgroups in the NVIDIA runtime config (required for rootless)
+      info "Disabling cgroups in NVIDIA runtime config (required for rootless)..."
+      try_cmd sudo nvidia-ctk config --set nvidia-container-cli.no-cgroups --in-place
 
-      # Export DOCKER_HOST so the CLI finds the rootless socket
-      DOCKER_HOST_LINE="export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock"
-      if ! grep -qF "$DOCKER_HOST_LINE" "$HOME/.zshrc" 2>/dev/null; then
-        echo "$DOCKER_HOST_LINE" >> "$HOME/.zshrc"
-        info "Added DOCKER_HOST to ~/.zshrc"
-      fi
       success "NVIDIA Container Toolkit configured for ROOTLESS Docker."
 
     else
