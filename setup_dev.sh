@@ -389,7 +389,99 @@ else
   warn "Skipped Zsh setup."
 fi
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# ── Step 10 – ROS 2 ──────────────────────────────────────────────────────────
+log "Step 10 · ROS 2"
+echo -e "  ${BOLD}Available distributions:${RESET}"
+echo -e "  ${CYAN}[1] Jazzy  ${RESET}– Ubuntu 24.04 LTS  ${GREEN}(recommended for your system)${RESET}"
+echo -e "  ${CYAN}[2] Humble ${RESET}– Ubuntu 22.04 LTS"
+echo ""
+read -rp "  ${BOLD}Choose distro [1/2] (default: 1): ${RESET}" ROS_CHOICE
+ROS_CHOICE="${ROS_CHOICE:-1}"
+if [[ "$ROS_CHOICE" == "2" ]]; then
+  ROS_DISTRO="humble"
+else
+  ROS_DISTRO="jazzy"
+fi
+
+echo ""
+echo -e "  ${BOLD}Installation type:${RESET}"
+echo -e "  ${CYAN}[1] Desktop${RESET}  – ROS, RViz, demos, tutorials (recommended)"
+echo -e "  ${CYAN}[2] Base   ${RESET}  – ROS only, no GUI tools"
+echo ""
+read -rp "  ${BOLD}Choose type [1/2] (default: 1): ${RESET}" ROS_TYPE_CHOICE
+ROS_TYPE_CHOICE="${ROS_TYPE_CHOICE:-1}"
+if [[ "$ROS_TYPE_CHOICE" == "2" ]]; then
+  ROS_PKG="ros-${ROS_DISTRO}-ros-base"
+else
+  ROS_PKG="ros-${ROS_DISTRO}-desktop"
+fi
+
+if ask "Install ${ROS_PKG}?"; then
+
+  # Step 1 – UTF-8 locale
+  info "Ensuring UTF-8 locale..."
+  sudo locale-gen en_US en_US.UTF-8
+  sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+  export LANG=en_US.UTF-8
+
+  # Step 2 – Enable universe repo
+  info "Enabling universe repository..."
+  sudo apt -y install software-properties-common
+  sudo add-apt-repository -y universe
+
+  # Step 3 – Add ROS 2 GPG key + apt repo
+  info "Adding ROS 2 apt repository..."
+  sudo apt -y install curl gnupg lsb-release
+  sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+    -o /usr/share/keyrings/ros-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+https://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
+    | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+  # Step 4 – Install
+  info "Running apt update..."
+  sudo apt update
+  info "Installing ${ROS_PKG} (this may take a while)..."
+  try_cmd sudo apt -y install "$ROS_PKG"
+
+  # Step 5 – Dev tools
+  if ask "Install ROS 2 dev tools? (colcon, rosdep, rosidl, etc.)"; then
+    try_cmd sudo apt -y install \
+      python3-colcon-common-extensions \
+      python3-rosdep \
+      python3-rosidl-generator-py \
+      ros-dev-tools
+    # Initialise rosdep
+    if [[ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]]; then
+      info "Initialising rosdep..."
+      try_cmd sudo rosdep init
+    fi
+    info "Updating rosdep..."
+    try_cmd rosdep update
+    success "ROS 2 dev tools installed."
+  fi
+
+  # Step 6 – DDS middleware (CycloneDDS — matches your .zshrc go2() config)
+  if ask "Install CycloneDDS middleware? (used in your go2() zshrc function)"; then
+    try_cmd sudo apt -y install "ros-${ROS_DISTRO}-rmw-cyclonedds-cpp"
+    success "CycloneDDS installed."
+  fi
+
+  # Step 7 – Source setup in .zshrc (already handled by dotfiles, just confirm)
+  SETUP_LINE="source /opt/ros/${ROS_DISTRO}/setup.zsh"
+  if ! grep -qF "$SETUP_LINE" "$DOTFILES_DIR/.zshrc" 2>/dev/null; then
+    warn "Your dotfiles/.zshrc sources /opt/ros/humble/setup.zsh — update it to:"
+    warn "  source /opt/ros/${ROS_DISTRO}/setup.zsh"
+  else
+    info ".zshrc already sources the correct ROS 2 setup file."
+  fi
+
+  success "ROS 2 ${ROS_DISTRO} installed."
+else
+  warn "Skipped ROS 2."
+fi
+
+
 echo ""
 echo -e "${BOLD}${GREEN}╔════════════════════════════════════╗"
 echo -e "║        Setup Complete! 🎉          ║"
@@ -402,6 +494,7 @@ if $HAS_NVIDIA; then
   echo -e "  2. ${YELLOW}Reboot${RESET} to activate NVIDIA drivers, then run: ${CYAN}nvidia-smi${RESET}"
 fi
 echo -e "  3. Open a new terminal – zsh plugins will auto-clone on first launch"
-echo -e "  4. To edit your config later, just update files in:"
+echo -e "  4. Source ROS 2 manually in the current shell: ${CYAN}source /opt/ros/${ROS_DISTRO:-jazzy}/setup.zsh${RESET}"
+echo -e "  5. To edit your config later, just update files in:"
 echo -e "     ${CYAN}${DOTFILES_DIR}/${RESET} and re-run the deploy step"
 echo ""

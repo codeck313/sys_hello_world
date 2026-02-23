@@ -15,7 +15,8 @@ This is an interactive setup script for a fresh Ubuntu install.
 | **Docker Engine** | Official Docker CE with compose plugin |
 | **NVIDIA Container Toolkit** | GPU passthrough in Docker (`--gpus all`) |
 | **Zsh** | Set as default shell with plugins + Spaceship prompt |
-| **Base tooling** | git, fzf, ripgrep, fd, bat, zoxide, neovim, thefuck, and more |
+| **ROS 2** | Jazzy (Ubuntu 24.04) or Humble (Ubuntu 22.04), with colcon, rosdep, CycloneDDS |
+| **Base tooling** | git, fzf (via mise), ripgrep, fd, bat, zoxide, neovim, thefuck, and more |
 
 ## Usage
 

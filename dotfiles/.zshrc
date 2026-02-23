@@ -187,11 +187,17 @@ fi
 alias ls='ls --color=auto'
 alias ll='ls -alF'
 
+# ── ROS 2 (auto-detect installed distro: jazzy → humble → iron → rolling) ────
+# for _ros_distro in jazzy humble iron rolling; do
+#   if [[ -f "/opt/ros/${_ros_distro}/setup.zsh" ]]; then
+#     source "/opt/ros/${_ros_distro}/setup.zsh"
+#     eval "$(register-python-argcomplete3 ros2  2>/dev/null || true)"
+#     eval "$(register-python-argcomplete3 colcon 2>/dev/null || true)"
+#     break
+#   fi
+# done
+# unset _ros_distro
 
-# ROS2 stuff
-# source /opt/ros/humble/setup.zsh
-# eval "$(register-python-argcomplete3 ros2)"
-# eval "$(register-python-argcomplete3 colcon)"
 
 # function colcon_b() {
 #     local ws_dir=""
@@ -274,7 +280,7 @@ alias ll='ls -alF'
 #     fi
 # }
 
-# export ROS_DOMAIN_ID=69
+# export ROS_DOMAIN_ID=169
 # function go2()
 # {
 # 	export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
