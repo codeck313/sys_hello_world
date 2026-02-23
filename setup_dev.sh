@@ -10,13 +10,28 @@
 set -euo pipefail
 
 # ── Colours ──────────────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+RED=$'\e[0;31m'; GREEN=$'\e[0;32m'; YELLOW=$'\e[1;33m'
+CYAN=$'\e[0;36m'; BOLD=$'\e[1m'; RESET=$'\e[0m'
 
 log()     { echo -e "\n${GREEN}${BOLD}==> $*${RESET}\n"; }
 info()    { echo -e "  ${CYAN}·${RESET} $*"; }
 warn()    { echo -e "  ${YELLOW}⚠  $*${RESET}"; }
 success() { echo -e "  ${GREEN}✔  $*${RESET}"; }
+error()   { echo -e "  ${RED}✘  $*${RESET}"; }
+
+# Run a command; on failure show the error and ask whether to continue or abort
+try_cmd() {
+  if ! "$@" 2>&1; then
+    error "Command failed: $*"
+    echo ""
+    read -rp "  ${BOLD}Continue anyway? [y/N]: ${RESET}" yn
+    if [[ ! "${yn:-n}" =~ ^[Yy]$ ]]; then
+      echo -e "\n${RED}Aborted.${RESET}\n"
+      exit 1
+    fi
+    warn "Continuing despite error..."
+  fi
+}
 
 # ── Resolve the dotfiles directory relative to this script ────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -223,8 +238,8 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
     docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
 
   # 8c – Enable Docker on boot
-  sudo systemctl enable docker.service
-  sudo systemctl enable containerd.service
+  try_cmd sudo systemctl enable docker.service
+  try_cmd sudo systemctl enable containerd.service
   success "Docker installed and enabled on boot."
 
   # 8d – Run Docker WITHOUT sudo
@@ -280,7 +295,7 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       sudo nvidia-ctk config --set nvidia-container-cli.no-cgroups --in-place
 
       info "Restarting rootless Docker daemon..."
-      systemctl --user restart docker
+      try_cmd systemctl --user restart docker
 
       info "Enabling systemd linger for ${USER}..."
       sudo loginctl enable-linger "$USER"
@@ -297,7 +312,7 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       # Standard mode
       info "Configuring NVIDIA runtime for standard Docker..."
       sudo nvidia-ctk runtime configure --runtime=docker
-      sudo systemctl restart docker
+      try_cmd sudo systemctl restart docker
       success "NVIDIA Container Toolkit configured for standard Docker."
     fi
 
