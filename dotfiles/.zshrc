@@ -182,103 +182,99 @@ fi
 alias ls='ls --color=auto'
 alias ll='ls -alF'
 
-eval $(thefuck --alias)
 
-alias plz='fuck'
-alias onthemove='echo 0 | sudo tee /sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode'
-alias pluggedin='echo 1 | sudo tee /sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode'
+# ROS2 stuff
+# source /opt/ros/humble/setup.zsh
+# eval "$(register-python-argcomplete3 ros2)"
+# eval "$(register-python-argcomplete3 colcon)"
 
-source /opt/ros/humble/setup.zsh
-eval "$(register-python-argcomplete3 ros2)"
-eval "$(register-python-argcomplete3 colcon)"
+# function colcon_b() {
+#     local ws_dir=""
+#     local current_dir=$(pwd)
 
-function colcon_b() {
-    local ws_dir=""
-    local current_dir=$(pwd)
+#     if [[ "$(basename "$current_dir")" == *_ws ]]; then
+#         ws_dir="$current_dir"
+#     else
+#         local dir="$current_dir"
+#         # Traverse up the directory tree
+#         while [[ "$dir" != "/" ]]; do
+#             if [[ "$(basename "$dir")" == *_ws ]]; then
+#                 ws_dir="$dir"
+#                 break
+#             fi
+#             dir=$(dirname "$dir")
+#         done
+#     fi
 
-    if [[ "$(basename "$current_dir")" == *_ws ]]; then
-        ws_dir="$current_dir"
-    else
-        local dir="$current_dir"
-        # Traverse up the directory tree
-        while [[ "$dir" != "/" ]]; do
-            if [[ "$(basename "$dir")" == *_ws ]]; then
-                ws_dir="$dir"
-                break
-            fi
-            dir=$(dirname "$dir")
-        done
-    fi
+#     if [ -z "$ws_dir" ]; then
+#         echo "Error: Workspace directory ending in '_ws' not found by traversing up from the current directory."
+#         return 1
+#     fi
 
-    if [ -z "$ws_dir" ]; then
-        echo "Error: Workspace directory ending in '_ws' not found by traversing up from the current directory."
-        return 1
-    fi
+#     echo "Found workspace: $ws_dir"
+#     echo "Building workspace..."
 
-    echo "Found workspace: $ws_dir"
-    echo "Building workspace..."
+#     cd "$ws_dir" || return
+#     colcon build --symlink-install
 
-    cd "$ws_dir" || return
-    colcon build --symlink-install
+#     cd "$current_dir"
+# }
 
-    cd "$current_dir"
-}
+# function sdsd() {
+#     local ws_dir=""
+#     local current_dir=$(pwd)
 
-function sdsd() {
-    local ws_dir=""
-    local current_dir=$(pwd)
+#     if [[ "$(basename "$current_dir")" == *_ws ]]; then
+#         ws_dir="$current_dir"
+#     else
+#         local dir="$current_dir"
+#         # Traverse up the directory tree
+#         while [[ "$dir" != "/" ]]; do
+#             if [[ "$(basename "$dir")" == *_ws ]]; then
+#                 ws_dir="$dir"
+#                 break
+#             fi
+#             dir=$(dirname "$dir")
+#         done
+#     fi
 
-    if [[ "$(basename "$current_dir")" == *_ws ]]; then
-        ws_dir="$current_dir"
-    else
-        local dir="$current_dir"
-        # Traverse up the directory tree
-        while [[ "$dir" != "/" ]]; do
-            if [[ "$(basename "$dir")" == *_ws ]]; then
-                ws_dir="$dir"
-                break
-            fi
-            dir=$(dirname "$dir")
-        done
-    fi
+#     if [ -z "$ws_dir" ]; then
+#         echo "Error: Workspace directory ending in '_ws' not found by traversing up from the current directory."
+#         return 1
+#     fi
 
-    if [ -z "$ws_dir" ]; then
-        echo "Error: Workspace directory ending in '_ws' not found by traversing up from the current directory."
-        return 1
-    fi
+#     echo "Found workspace: $ws_dir"
+#     echo "Sourcing workspace..."
 
-    echo "Found workspace: $ws_dir"
-    echo "Sourcing workspace..."
+#     cd "$ws_dir" || return
+#     source install/setup.zsh
 
-    cd "$ws_dir" || return
-    source install/setup.zsh
+#     cd "$current_dir"
+# }
 
-    cd "$current_dir"
-}
-
-function debug_node()
-{
-    # Launch a GDB session on {node}
-    # Usage: debug_node {node_name}                        "
-    local full_name="$(ros2 pkg executables | grep -i $*)"
-    local node_name=$(echo "$full_name" | cut -d' ' -f2)
-    local pkg_name=$(echo "$full_name" | cut -d' ' -f1)
-    if [ -z "$node_name" ]
-    then
-        echo "ERROR! Could not find node: $*, available candidates:"
-        ros2 pkg executables
-    else
-        local pkg_dir=$(ros2 pkg prefix $pkg_name)
-        gdb --args $pkg_dir/lib/$pkg_name/$node_name
-    fi
-}
+# function debug_node()
+# {
+#     # Launch a GDB session on {node}
+#     # Usage: debug_node {node_name}                        "
+#     local full_name="$(ros2 pkg executables | grep -i $*)"
+#     local node_name=$(echo "$full_name" | cut -d' ' -f2)
+#     local pkg_name=$(echo "$full_name" | cut -d' ' -f1)
+#     if [ -z "$node_name" ]
+#     then
+#         echo "ERROR! Could not find node: $*, available candidates:"
+#         ros2 pkg executables
+#     else
+#         local pkg_dir=$(ros2 pkg prefix $pkg_name)
+#         gdb --args $pkg_dir/lib/$pkg_name/$node_name
+#     fi
+# }
 
 # export ROS_DOMAIN_ID=69
-function go2()
-{
-	export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-	export CYCLONEDDS_URI=file:///home/parrot/cyclonedds_config.xml
-}
+# function go2()
+# {
+# 	export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+# 	export CYCLONEDDS_URI=file:///home/parrot/cyclonedds_config.xml
+# }
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
 export RCUTILS_COLORIZED_OUTPUT=1
@@ -301,6 +297,6 @@ function conda_on(){
 	# <<< conda initialize <<<
 }
 
-export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-export PATH=/usr/local/cuda-12.6/bin${PATH:+:${PATH}}
+# export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+# export PATH=/usr/local/cuda-12.6/bin${PATH:+:${PATH}}
 #export LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}

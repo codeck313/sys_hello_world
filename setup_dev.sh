@@ -119,8 +119,8 @@ log "Step 2 · Base developer tooling"
 BASE_PKGS=(
   build-essential curl wget ca-certificates gnupg lsb-release
   software-properties-common git python3 python3-pip python3-venv
-  vim nano unzip zip tar tree htop jq ripgrep fd-find bat thefuck
-  zsh zoxide fzf neovim
+  vim nano unzip zip tar tree htop jq ripgrep fd-find bat zsh 
+  zoxide neovim
 )
 info "Packages: ${BASE_PKGS[*]}"
 if ask "Install base packages?"; then
@@ -136,6 +136,37 @@ if ask "Install base packages?"; then
   success "Base tooling installed."
 else
   warn "Skipped."
+fi
+
+# ── Step 2b – mise + fzf ─────────────────────────────────────────────────────
+log "Step 2b · mise (version manager) + fzf"
+if ask "Install mise and use it to install fzf?"; then
+  # Install mise via official installer script
+  if ! command -v mise >/dev/null 2>&1; then
+    info "Installing mise..."
+    curl https://mise.run | sh
+    # Activate mise for the rest of this script
+    export PATH="$HOME/.local/bin:$PATH"
+    eval "$("$HOME/.local/bin/mise" activate bash)"
+    success "mise installed."
+  else
+    info "mise already installed, activating..."
+    eval "$(mise activate bash)"
+  fi
+
+  # Ensure mise activate is in .zshrc
+  MISE_LINE='eval "$(~/.local/bin/mise activate zsh)"'
+  if ! grep -qF "$MISE_LINE" "$HOME/.zshrc" 2>/dev/null; then
+    echo "$MISE_LINE" >> "$HOME/.zshrc"
+    info "Added mise activation to ~/.zshrc"
+  fi
+
+  # Install latest fzf via mise
+  info "Installing fzf via mise..."
+  try_cmd mise use -g fzf@latest
+  success "fzf installed via mise."
+else
+  warn "Skipped mise + fzf."
 fi
 
 # ── Step 3 – Terminator ───────────────────────────────────────────────────────
