@@ -447,6 +447,10 @@ if $IS_JETPACK; then
       success "Jetson pip packages installed."
     fi
 
+    chmod +x patch_thor_jp7_in_repo.sh
+    chmod +x setup_jtop_jetson.sh
+    sudo ./setup_jtop_jetson.sh
+
     # Enable jetson_stats service so jtop works without sudo
     if python3 -c "import jetson_stats" 2>/dev/null || \
        sudo pip3 show jetson-stats &>/dev/null; then

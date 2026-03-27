@@ -46,8 +46,7 @@ jetpack:
     # Uncomment if you use MIPI CSI cameras with Argus:
     # - nvidia-l4t-gstreamer
 
-  pip:
-    - jetson-stats       # provides: jtop, jetson_release, jetson_config, jetson_swap
+  pip: []
 
 # =============================================================================
 #  Network profiles
