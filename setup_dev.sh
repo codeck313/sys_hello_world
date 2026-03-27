@@ -263,82 +263,93 @@ fi
 log "Step 7 · Docker Engine"
 if ask "Install Docker Engine?"; then
 
-  # 7a – Remove legacy packages
-  info "Removing any legacy Docker packages..."
-  sudo apt -y remove docker docker-engine docker.io containerd runc 2>/dev/null || true
+  if $IS_JETPACK; then
+    # ── Jetpack: follow https://docs.nvidia.com/jetson/agx-thor-devkit/user-guide/latest/setup_docker.html
+    echo -e "  ${BOLD}How was this Jetson flashed?${RESET}"
+    echo -e "  ${CYAN}[1]${RESET} Linux_for_Tegra flash script or SDK Manager  (need to install Docker + CTK)"
+    echo -e "  ${CYAN}[2]${RESET} Jetson USB installation stick               (Docker + CTK already present, skip to config)"
+    echo ""
+    read -rp "  ${BOLD}Choose [1/2] (default: 1): ${RESET}" JETSON_FLASH_METHOD
+    JETSON_FLASH_METHOD="${JETSON_FLASH_METHOD:-1}"
 
-  # 7b – Add official Docker GPG key + apt repo
-  # On Jetpack (aarch64), Docker's official repo supports arm64 natively.
-  info "Adding Docker's official apt repository..."
-  sudo install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    if [[ "$JETSON_FLASH_METHOD" == "1" ]]; then
+      # 7a – Install nvidia-container from the JetPack APT repo (never the external libnvidia-container repo)
+      info "Installing nvidia-container from JetPack APT repo..."
+      sudo apt-get update
+      sudo apt-get install -y nvidia-container curl
 
-  # Jetpack reports ID=ubuntu but VERSION_CODENAME may differ; handle both
-  OS_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
-  if [[ -z "$OS_CODENAME" ]]; then
-    OS_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
-    warn "Could not detect codename from os-release, using: $OS_CODENAME"
-  fi
+      # 7b – Install Docker via the official convenience script (not Ubuntu apt)
+      info "Installing Docker via get.docker.com..."
+      curl https://get.docker.com | sh
+      sudo systemctl --now enable docker
+      success "Docker installed and enabled on boot."
 
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      # 7c – Configure the NVIDIA runtime
+      info "Configuring NVIDIA runtime for Docker..."
+      sudo nvidia-ctk runtime configure --runtime=docker
+
+      # 7d – Reload and restart Docker to apply the runtime config
+      sudo systemctl daemon-reload
+      sudo systemctl restart docker
+      success "Docker daemon restarted with NVIDIA runtime."
+    else
+      info "USB install detected — Docker and nvidia-container already present."
+      info "Proceeding to configure the default runtime..."
+    fi
+
+    # 7e – Set nvidia as the default runtime so --runtime=nvidia is not needed every time
+    log "Step 7e · Set nvidia as default Docker runtime"
+    info "Adding default-runtime: nvidia to /etc/docker/daemon.json..."
+    sudo apt-get install -y jq
+    sudo jq '. + {"default-runtime": "nvidia"}' /etc/docker/daemon.json \
+      | sudo tee /etc/docker/daemon.json.tmp \
+      && sudo mv /etc/docker/daemon.json.tmp /etc/docker/daemon.json
+    sudo systemctl daemon-reload
+    sudo systemctl restart docker
+    success "Default runtime set to nvidia."
+
+  else
+    # ── x86: standard Docker install via official apt repo ───────────────────
+    # 7a – Remove legacy packages
+    info "Removing any legacy Docker packages..."
+    sudo apt -y remove docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+    # 7b – Add official Docker GPG key + apt repo
+    info "Adding Docker's official apt repository..."
+    sudo install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+    OS_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
+    if [[ -z "$OS_CODENAME" ]]; then
+      OS_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
+      warn "Could not detect codename from os-release, using: $OS_CODENAME"
+    fi
+
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/ubuntu \
 ${OS_CODENAME} stable" \
-    | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-  sudo apt update
-  sudo apt -y install docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
+      | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt update
+    sudo apt -y install docker-ce docker-ce-cli containerd.io \
+      docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
 
-  # 7c – Enable Docker on boot
-  try_cmd sudo systemctl enable docker.service
-  try_cmd sudo systemctl enable containerd.service
-  success "Docker installed and enabled on boot."
+    try_cmd sudo systemctl enable docker.service
+    try_cmd sudo systemctl enable containerd.service
+    success "Docker installed and enabled on boot."
 
-  # 7d – Run Docker WITHOUT sudo
-  log "Step 7d · Configure Docker to run without sudo"
-  info "Creating 'docker' group..."
-  sudo groupadd docker 2>/dev/null || true
+    # 7c – NVIDIA Container Toolkit (x86 only — add upstream libnvidia-container repo)
+    if $HAS_NVIDIA && ask "Install NVIDIA Container Toolkit?"; then
+      echo ""
+      echo -e "  ${BOLD}Two modes available:${RESET}"
+      echo -e "  ${CYAN}[1] Standard${RESET}  – daemon as root   (most compatible)"
+      echo -e "  ${CYAN}[2] Rootless${RESET}  – daemon as $USER"
+      echo ""
+      read -rp "  ${BOLD}Choose mode [1/2] (default: 1): ${RESET}" DOCKER_MODE
+      DOCKER_MODE="${DOCKER_MODE:-1}"
 
-  info "Adding ${USER} to the 'docker' group..."
-  sudo usermod -aG docker "$USER"
-
-  if [[ -d "$HOME/.docker" ]]; then
-    info "Correcting ~/.docker ownership..."
-    sudo chown "$USER":"$USER" "$HOME/.docker" -R
-    sudo chmod g+rwx "$HOME/.docker" -R
-    success "~/.docker permissions fixed."
-  fi
-
-  success "Docker group configured."
-  warn "Run 'newgrp docker' in your terminal OR log out/in to activate group without reboot."
-
-  # 7e – NVIDIA Container Toolkit
-  log "Step 7e · NVIDIA Container Toolkit (Docker GPU support)"
-  echo ""
-  echo -e "  ${BOLD}Two modes available:${RESET}"
-  echo -e "  ${CYAN}[1] Standard${RESET}  – daemon as root, nvidia-ctk writes /etc/docker/daemon.json (most compatible)"
-  echo -e "  ${CYAN}[2] Rootless${RESET}  – daemon as your user, nvidia-ctk writes ~/.config/docker/daemon.json"
-  echo ""
-  read -rp "  ${BOLD}Choose mode [1/2] (default: 1): ${RESET}" DOCKER_MODE
-  DOCKER_MODE="${DOCKER_MODE:-1}"
-
-  if $HAS_NVIDIA && ask "Install NVIDIA Container Toolkit?"; then
-    if $IS_JETPACK; then
-      # On Jetpack the toolkit ships with L4T; configure it directly.
-      info "Jetpack detected — nvidia-container-toolkit may already be present."
-      info "Attempting install/upgrade via apt..."
-      # Add NVIDIA container toolkit repo (L4T / Jetpack variant)
-      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-        | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-      # Use the arm64-compatible stable list
-      curl -s -L "https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list" \
-        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-        | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-      sudo apt update
-      sudo apt -y install nvidia-container-toolkit
-    else
       curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
         | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
       curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
@@ -346,45 +357,44 @@ ${OS_CODENAME} stable" \
         | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
       sudo apt update
       sudo apt -y install nvidia-container-toolkit
-    fi
 
-    if [[ "$DOCKER_MODE" == "2" ]]; then
-      # ── Rootless Docker ───────────────────────────────────────────────────────
-      info "Disabling system-wide Docker daemon (rootless runs its own)..."
-      try_cmd sudo systemctl disable --now docker.service docker.socket
+      if [[ "$DOCKER_MODE" == "2" ]]; then
+        info "Disabling system-wide Docker daemon (rootless runs its own)..."
+        try_cmd sudo systemctl disable --now docker.service docker.socket
+        try_cmd dockerd-rootless-setuptool.sh install
+        mkdir -p "$HOME/.config/docker"
+        try_cmd nvidia-ctk runtime configure --runtime=docker \
+          --config="$HOME/.config/docker/daemon.json"
+        try_cmd systemctl --user restart docker
+        try_cmd sudo nvidia-ctk config --set nvidia-container-cli.no-cgroups --in-place
+        success "NVIDIA Container Toolkit configured for ROOTLESS Docker."
+      else
+        sudo nvidia-ctk runtime configure --runtime=docker
+        try_cmd sudo systemctl restart docker
+        success "NVIDIA Container Toolkit configured for standard Docker."
+      fi
 
-      info "Running dockerd-rootless-setuptool.sh install..."
-      try_cmd dockerd-rootless-setuptool.sh install
-
-      info "Configuring NVIDIA runtime for rootless Docker (no sudo)..."
-      mkdir -p "$HOME/.config/docker"
-      try_cmd nvidia-ctk runtime configure --runtime=docker \
-        --config="$HOME/.config/docker/daemon.json"
-
-      info "Restarting rootless Docker daemon..."
-      try_cmd systemctl --user restart docker
-
-      info "Disabling cgroups in NVIDIA runtime config (required for rootless)..."
-      try_cmd sudo nvidia-ctk config --set nvidia-container-cli.no-cgroups --in-place
-
-      success "NVIDIA Container Toolkit configured for ROOTLESS Docker."
-
+      if ask "Run nvidia-smi inside Docker to verify GPU access?"; then
+        docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu22.04 nvidia-smi \
+          && success "GPU verified inside Docker!" \
+          || warn "Smoke test failed – expected before reboot if driver was just installed."
+      fi
     else
-      # Standard mode
-      info "Configuring NVIDIA runtime for standard Docker..."
-      sudo nvidia-ctk runtime configure --runtime=docker
-      try_cmd sudo systemctl restart docker
-      success "NVIDIA Container Toolkit configured for standard Docker."
+      warn "Skipped NVIDIA Container Toolkit."
     fi
-
-    if ask "Run nvidia-smi inside Docker to verify GPU access?"; then
-      docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu22.04 nvidia-smi \
-        && success "GPU verified inside Docker!" \
-        || warn "Smoke test failed – expected before reboot if driver was just installed."
-    fi
-  else
-    warn "Skipped NVIDIA Container Toolkit."
   fi
+
+  # ── Common: add user to docker group ─────────────────────────────────────────
+  log "Step 7f · Add ${USER} to the docker group"
+  sudo groupadd docker 2>/dev/null || true
+  sudo usermod -aG docker "$USER"
+  if [[ -d "$HOME/.docker" ]]; then
+    sudo chown "$USER":"$USER" "$HOME/.docker" -R
+    sudo chmod g+rwx "$HOME/.docker" -R
+    success "~/.docker permissions fixed."
+  fi
+  success "Docker group configured."
+  warn "Run 'newgrp docker' or log out/in to activate the group in your current session."
 
 else
   warn "Skipped Docker."

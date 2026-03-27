@@ -42,6 +42,7 @@ jetpack:
     - gstreamer1.0-plugins-base
     - gstreamer1.0-plugins-good
     - chromium-browser
+    - nvidia-container
     # Uncomment if you use MIPI CSI cameras with Argus:
     # - nvidia-l4t-gstreamer
 
