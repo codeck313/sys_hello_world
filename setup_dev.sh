@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# =============================================================================
-#  Interactive Dev Environment Setup
-#  Installs: Terminator · Ghostty · btop · tmux ·
-#            NVIDIA drivers · Docker + NVIDIA GPU · Zsh customisation
-#
-#  Dotfiles are read from ./dotfiles/ next to this script.
-#  Edit them there — this script just copies them into place.
-# =============================================================================
 set -euo pipefail
 
 # ── Colours ──────────────────────────────────────────────────────────────────
@@ -33,13 +25,19 @@ try_cmd() {
   fi
 }
 
-# ── Resolve the dotfiles directory relative to this script ────────────────────
+# ── Resolve directories relative to this script ───────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOTFILES_DIR="$SCRIPT_DIR/dotfiles"
+PACKAGES_YAML="$SCRIPT_DIR/packages.yaml"
 
 if [[ ! -d "$DOTFILES_DIR" ]]; then
   echo -e "${RED}ERROR: dotfiles/ directory not found at $DOTFILES_DIR${RESET}"
   echo -e "  Make sure the dotfiles/ folder sits next to this script."
+  exit 1
+fi
+
+if [[ ! -f "$PACKAGES_YAML" ]]; then
+  echo -e "${RED}ERROR: packages.yaml not found at $PACKAGES_YAML${RESET}"
   exit 1
 fi
 
@@ -76,6 +74,26 @@ ask() {
   [[ "$yn" =~ ^[Yy]$ ]]
 }
 
+# ── Bootstrap python3-yaml (needed to parse packages.yaml) ────────────────────
+if ! python3 -c "import yaml" 2>/dev/null; then
+  echo -e "  ${CYAN}·${RESET} Installing python3-yaml (required to parse packages.yaml)..."
+  sudo apt-get -y install python3-yaml -qq
+fi
+
+# ── Read package lists from packages.yaml ─────────────────────────────────────
+# Usage: pkg_list <section> [apt|pip]
+# Returns a space-separated list of packages for the given section and key.
+pkg_list() {
+  local section="$1" key="${2:-apt}"
+  python3 - <<PYEOF
+import yaml, sys
+with open("$PACKAGES_YAML") as f:
+    cfg = yaml.safe_load(f)
+pkgs = (cfg.get("$section") or {}).get("$key") or []
+print(" ".join(str(p) for p in pkgs))
+PYEOF
+}
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 clear
 echo -e "${BOLD}${CYAN}"
@@ -83,7 +101,7 @@ cat << 'EOF'
   ╔══════════════════════════════════════════════════╗
   ║        Interactive Dev Environment Setup         ║
   ╠══════════════════════════════════════════════════╣
-  ║  Last Updated: 23rd Feb 2026                     ║
+  ║  Last Updated: 27th Mar 2026                     ║
   ║						     ║
   ║  These are not the droids you are looking for... ║
   ║  but this script will help you build them.       ║
@@ -95,11 +113,22 @@ echo -e "${BOLD}You will be asked before each major step.${RESET}\n"
 
 if ! ask "Ready to start?"; then echo "Aborted."; exit 0; fi
 
-# ── Step 0 – Detect NVIDIA GPU ────────────────────────────────────────────────
+# ── Step 0 – Detect platform ──────────────────────────────────────────────────
 HAS_NVIDIA=false
-if lspci 2>/dev/null | grep -qi nvidia; then
+IS_JETPACK=false
+ARCH="$(uname -m)"
+
+# Jetpack detection: /etc/nv_tegra_release exists on all L4T/Jetpack systems
+if [[ -f /etc/nv_tegra_release ]]; then
+  IS_JETPACK=true
   HAS_NVIDIA=true
-  info "NVIDIA GPU detected."
+  JETPACK_VER=$(head -1 /etc/nv_tegra_release 2>/dev/null || echo "unknown")
+  info "NVIDIA Jetpack (L4T) detected: ${JETPACK_VER}"
+  info "Architecture: ${ARCH}"
+  warn "NVIDIA drivers are pre-installed on Jetpack — driver install step will be skipped."
+elif lspci 2>/dev/null | grep -qi nvidia; then
+  HAS_NVIDIA=true
+  info "NVIDIA GPU detected (x86_64)."
 else
   warn "No NVIDIA GPU detected – driver / Docker GPU steps will be skipped."
 fi
@@ -115,13 +144,8 @@ else
 fi
 
 # ── Step 2 – Base tooling ─────────────────────────────────────────────────────
-log "Step 2 · Base developer tooling"
-BASE_PKGS=(
-  build-essential curl wget ca-certificates gnupg lsb-release
-  software-properties-common git python3 python3-pip python3-venv
-  vim nano unzip zip tar tree htop jq ripgrep fd-find bat zsh 
-  zoxide neovim
-)
+log "Step 2 · Base developer tooling (from packages.yaml → base.apt)"
+mapfile -t BASE_PKGS < <(pkg_list base apt | tr ' ' '\n' | grep -v '^$')
 info "Packages: ${BASE_PKGS[*]}"
 if ask "Install base packages?"; then
   sudo apt -y install "${BASE_PKGS[@]}"
@@ -136,6 +160,21 @@ if ask "Install base packages?"; then
   success "Base tooling installed."
 else
   warn "Skipped."
+fi
+
+# ── Step 2c – x86-only packages ───────────────────────────────────────────────
+if ! $IS_JETPACK; then
+  mapfile -t X86_PKGS < <(pkg_list x86 apt | tr ' ' '\n' | grep -v '^$')
+  if [[ ${#X86_PKGS[@]} -gt 0 ]]; then
+    log "Step 2c · x86-specific packages (from packages.yaml → x86.apt)"
+    info "Packages: ${X86_PKGS[*]}"
+    if ask "Install x86-specific packages?"; then
+      sudo apt -y install "${X86_PKGS[@]}"
+      success "x86 packages installed."
+    else
+      warn "Skipped."
+    fi
+  fi
 fi
 
 # ── Step 2b – mise + fzf ─────────────────────────────────────────────────────
@@ -157,7 +196,7 @@ if ask "Install mise and use it to install fzf?"; then
   # Install latest fzf via mise
   info "Installing fzf via mise..."
   try_cmd mise use -g fzf@latest
-  success "fzf installed via mise. Ctrl+R, Ctrl+T and Alt+C will work once .zshrc is deployed."
+  success "fzf installed via mise."
 else
   warn "Skipped mise + fzf."
 fi
@@ -167,40 +206,20 @@ log "Step 3 · Terminator"
 if ask "Install Terminator?"; then
   sudo apt -y install terminator
   success "Terminator installed."
-else
-  warn "Skipped."
-fi
 
-# ── Step 4 – Ghostty ─────────────────────────────────────────────────────────
-log "Step 4 · Ghostty terminal"
-if ask "Install Ghostty? (via snap)"; then
-  if snap list 2>/dev/null | grep -q "^ghostty "; then
-    warn "Ghostty already installed via snap."
-  else
-    sudo snap install ghostty --classic 2>/dev/null || {
-      warn "Snap install failed – trying GitHub release .deb..."
-      GHOSTTY_VER=$(curl -s https://api.github.com/repos/ghostty-org/ghostty/releases/latest \
-        | grep '"tag_name"' | cut -d'"' -f4)
-      wget -q "https://github.com/ghostty-org/ghostty/releases/download/${GHOSTTY_VER}/ghostty_${GHOSTTY_VER}_amd64.deb" \
-        -O /tmp/ghostty.deb
-      sudo dpkg -i /tmp/ghostty.deb || sudo apt -f install -y
-    }
-  fi
-  success "Ghostty installed."
-
-  log "Step 4b · Deploy Ghostty config"
-  if ask "Deploy dotfiles/ghostty/config → ~/.config/ghostty/config?"; then
+  log "Step 3b · Deploy Terminator config (white theme)"
+  if ask "Deploy dotfiles/terminator/config → ~/.config/terminator/config?"; then
     deploy_file \
-      "$DOTFILES_DIR/ghostty/config" \
-      "$HOME/.config/ghostty/config" \
-      "Ghostty config"
+      "$DOTFILES_DIR/terminator/config" \
+      "$HOME/.config/terminator/config" \
+      "Terminator config"
   fi
 else
   warn "Skipped."
 fi
 
-# ── Step 5 – btop ─────────────────────────────────────────────────────────────
-log "Step 5 · btop"
+# ── Step 4 – btop ─────────────────────────────────────────────────────────────
+log "Step 4 · btop"
 if ask "Install btop?"; then
   sudo apt -y install btop 2>/dev/null || sudo snap install btop
   success "btop installed."
@@ -208,8 +227,8 @@ else
   warn "Skipped."
 fi
 
-# ── Step 6 – tmux ─────────────────────────────────────────────────────────────
-log "Step 6 · tmux"
+# ── Step 5 – tmux ─────────────────────────────────────────────────────────────
+log "Step 5 · tmux"
 if ask "Install tmux?"; then
   sudo apt -y install tmux
   success "tmux installed."
@@ -217,10 +236,12 @@ else
   warn "Skipped."
 fi
 
-# ── Step 7 – NVIDIA drivers ───────────────────────────────────────────────────
-log "Step 7 · NVIDIA drivers"
+# ── Step 6 – NVIDIA drivers ───────────────────────────────────────────────────
+log "Step 6 · NVIDIA drivers"
 NVIDIA_INSTALLED=false
-if $HAS_NVIDIA; then
+if $IS_JETPACK; then
+  info "Jetpack detected — NVIDIA drivers are pre-installed. Skipping."
+elif $HAS_NVIDIA; then
   info "Detecting recommended driver..."
   RECOMMENDED=$(ubuntu-drivers devices 2>/dev/null | grep recommended | awk '{print $3}' | head -1 || true)
   [[ -z "$RECOMMENDED" ]] && RECOMMENDED="nvidia-driver-535" && warn "Could not auto-detect; defaulting to $RECOMMENDED"
@@ -238,45 +259,51 @@ else
   warn "No NVIDIA GPU – skipping."
 fi
 
-# ── Step 8 – Docker ───────────────────────────────────────────────────────────
-log "Step 8 · Docker Engine"
+# ── Step 7 – Docker ───────────────────────────────────────────────────────────
+log "Step 7 · Docker Engine"
 if ask "Install Docker Engine?"; then
 
-  # 8a – Remove legacy packages
+  # 7a – Remove legacy packages
   info "Removing any legacy Docker packages..."
   sudo apt -y remove docker docker-engine docker.io containerd runc 2>/dev/null || true
 
-  # 8b – Add official Docker GPG key + apt repo
+  # 7b – Add official Docker GPG key + apt repo
+  # On Jetpack (aarch64), Docker's official repo supports arm64 natively.
   info "Adding Docker's official apt repository..."
   sudo install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
     | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
   sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+  # Jetpack reports ID=ubuntu but VERSION_CODENAME may differ; handle both
+  OS_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
+  if [[ -z "$OS_CODENAME" ]]; then
+    OS_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
+    warn "Could not detect codename from os-release, using: $OS_CODENAME"
+  fi
+
   echo \
     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/ubuntu \
-$(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+${OS_CODENAME} stable" \
     | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
   sudo apt update
   sudo apt -y install docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
 
-  # 8c – Enable Docker on boot
+  # 7c – Enable Docker on boot
   try_cmd sudo systemctl enable docker.service
   try_cmd sudo systemctl enable containerd.service
   success "Docker installed and enabled on boot."
 
-  # 8d – Run Docker WITHOUT sudo
-  # Source: https://docs.docker.com/engine/install/linux-postinstall/
-  # Create 'docker' group, add user, fix ~/.docker ownership, activate via newgrp.
-  log "Step 8d · Configure Docker to run without sudo"
+  # 7d – Run Docker WITHOUT sudo
+  log "Step 7d · Configure Docker to run without sudo"
   info "Creating 'docker' group..."
   sudo groupadd docker 2>/dev/null || true
 
   info "Adding ${USER} to the 'docker' group..."
   sudo usermod -aG docker "$USER"
 
-  # Fix ~/.docker ownership if it was ever touched by a sudo docker call
   if [[ -d "$HOME/.docker" ]]; then
     info "Correcting ~/.docker ownership..."
     sudo chown "$USER":"$USER" "$HOME/.docker" -R
@@ -287,8 +314,8 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
   success "Docker group configured."
   warn "Run 'newgrp docker' in your terminal OR log out/in to activate group without reboot."
 
-  # 8e – NVIDIA Container Toolkit
-  log "Step 8e · NVIDIA Container Toolkit (Docker GPU support)"
+  # 7e – NVIDIA Container Toolkit
+  log "Step 7e · NVIDIA Container Toolkit (Docker GPU support)"
   echo ""
   echo -e "  ${BOLD}Two modes available:${RESET}"
   echo -e "  ${CYAN}[1] Standard${RESET}  – daemon as root, nvidia-ctk writes /etc/docker/daemon.json (most compatible)"
@@ -298,45 +325,45 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
   DOCKER_MODE="${DOCKER_MODE:-1}"
 
   if $HAS_NVIDIA && ask "Install NVIDIA Container Toolkit?"; then
-    # Add NVIDIA repo
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-      | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-      | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-    sudo apt update
-    sudo apt -y install nvidia-container-toolkit
+    if $IS_JETPACK; then
+      # On Jetpack the toolkit ships with L4T; configure it directly.
+      info "Jetpack detected — nvidia-container-toolkit may already be present."
+      info "Attempting install/upgrade via apt..."
+      # Add NVIDIA container toolkit repo (L4T / Jetpack variant)
+      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+        | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      # Use the arm64-compatible stable list
+      curl -s -L "https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list" \
+        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+        | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+      sudo apt update
+      sudo apt -y install nvidia-container-toolkit
+    else
+      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+        | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+        | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+      sudo apt update
+      sudo apt -y install nvidia-container-toolkit
+    fi
 
     if [[ "$DOCKER_MODE" == "2" ]]; then
       # ── Rootless Docker ───────────────────────────────────────────────────────
-      # Source: https://docs.docker.com/engine/security/rootless/
-      # Source: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
-
-      # Step 1: uidmap provides newuidmap/newgidmap, required for user namespaces
-      # info "Installing uidmap (required for rootless user namespaces)..."
-      # sudo apt -y install uidmap
-
-      # Step 2: disable the system-wide Docker daemon so it doesn't conflict
       info "Disabling system-wide Docker daemon (rootless runs its own)..."
       try_cmd sudo systemctl disable --now docker.service docker.socket
 
-      # Step 3: run the rootless installer as the current user (no sudo)
-      # This sets up a user-level systemd service and creates the rootless socket
       info "Running dockerd-rootless-setuptool.sh install..."
       try_cmd dockerd-rootless-setuptool.sh install
 
-      # ── NVIDIA rootless steps ─────────────────────────────────────────────────
-      # Step 4: configure the NVIDIA runtime without sudo — writes to user-space daemon.json
       info "Configuring NVIDIA runtime for rootless Docker (no sudo)..."
       mkdir -p "$HOME/.config/docker"
       try_cmd nvidia-ctk runtime configure --runtime=docker \
         --config="$HOME/.config/docker/daemon.json"
 
-      # Step 5: restart the user-level Docker daemon to pick up the NVIDIA runtime
       info "Restarting rootless Docker daemon..."
       try_cmd systemctl --user restart docker
 
-      # Step 6: disable cgroups in the NVIDIA runtime config (required for rootless)
       info "Disabling cgroups in NVIDIA runtime config (required for rootless)..."
       try_cmd sudo nvidia-ctk config --set nvidia-container-cli.no-cgroups --in-place
 
@@ -363,138 +390,195 @@ else
   warn "Skipped Docker."
 fi
 
-# ── Step 9 – Zsh & dotfiles ───────────────────────────────────────────────────
-log "Step 9 · Zsh setup"
-if ask "Set Zsh as default shell?"; then
-  sudo apt -y install zsh
-  if [ "$SHELL" != "$(which zsh)" ]; then
-    chsh -s "$(which zsh)"
-    success "Default shell changed to zsh. Log out/in for it to take effect."
+# ── Step 8 – uv ───────────────────────────────────────────────────────────────
+log "Step 8 · uv (Python package & project manager)"
+if ask "Install uv?"; then
+  if command -v uv >/dev/null 2>&1; then
+    info "uv already installed. Updating..."
+    uv self update && success "uv updated."
   else
-    info "Zsh is already the default shell."
-  fi
-
-  log "Step 9b · Deploy dotfiles"
-  echo -e "  Files that will be deployed from ${CYAN}${DOTFILES_DIR}${RESET}:"
-  echo -e "    dotfiles/.zshrc          → ${HOME}/.zshrc"
-  echo -e "    dotfiles/ghostty/config  → ${HOME}/.config/ghostty/config  (if not already done)"
-  echo ""
-  if ask "Deploy all dotfiles now?"; then
-    deploy_file "$DOTFILES_DIR/.zshrc"          "$HOME/.zshrc"                       ".zshrc"
-    deploy_file "$DOTFILES_DIR/ghostty/config"  "$HOME/.config/ghostty/config"       "Ghostty config"
-  else
-    warn "Skipped dotfile deployment."
+    info "Installing uv via official installer..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    success "uv installed."
+    info "uv is available at ~/.local/bin/uv — ensure ~/.local/bin is in your PATH."
   fi
 else
-  warn "Skipped Zsh setup."
+  warn "Skipped uv."
 fi
 
-# ── Step 10 – ROS 2 ──────────────────────────────────────────────────────────
-log "Step 10 · ROS 2"
-echo -e "  ${BOLD}Available distributions:${RESET}"
-echo -e "  ${CYAN}[1] Jazzy  ${RESET}– Ubuntu 24.04 LTS  ${GREEN}(recommended for your system)${RESET}"
-echo -e "  ${CYAN}[2] Humble ${RESET}– Ubuntu 22.04 LTS"
-echo ""
-read -rp "  ${BOLD}Choose distro [1/2] (default: 1): ${RESET}" ROS_CHOICE
-ROS_CHOICE="${ROS_CHOICE:-1}"
-if [[ "$ROS_CHOICE" == "2" ]]; then
-  ROS_DISTRO="humble"
-else
-  ROS_DISTRO="jazzy"
-fi
+# ── Step 9 – Jetson debug & monitoring tools ──────────────────────────────────
+if $IS_JETPACK; then
+  log "Step 9 · Jetson debug & monitoring tools (from packages.yaml → jetpack)"
 
-echo ""
-echo -e "  ${BOLD}Installation type:${RESET}"
-echo -e "  ${CYAN}[1] Desktop${RESET}  – ROS, RViz, demos, tutorials (recommended)"
-echo -e "  ${CYAN}[2] Base   ${RESET}  – ROS only, no GUI tools"
-echo ""
-read -rp "  ${BOLD}Choose type [1/2] (default: 1): ${RESET}" ROS_TYPE_CHOICE
-ROS_TYPE_CHOICE="${ROS_TYPE_CHOICE:-1}"
-if [[ "$ROS_TYPE_CHOICE" == "2" ]]; then
-  ROS_PKG="ros-${ROS_DISTRO}-ros-base"
-else
-  ROS_PKG="ros-${ROS_DISTRO}-desktop"
-fi
+  mapfile -t JETPACK_APT < <(pkg_list jetpack apt | tr ' ' '\n' | grep -v '^$')
+  mapfile -t JETPACK_PIP < <(pkg_list jetpack pip | tr ' ' '\n' | grep -v '^$')
 
-if ask "Install ${ROS_PKG}?"; then
+  if [[ ${#JETPACK_APT[@]} -gt 0 ]]; then
+    info "apt packages: ${JETPACK_APT[*]}"
+  fi
+  if [[ ${#JETPACK_PIP[@]} -gt 0 ]]; then
+    info "pip packages: ${JETPACK_PIP[*]}"
+  fi
 
-  # Step 1 – UTF-8 locale
-  info "Ensuring UTF-8 locale..."
-  sudo locale-gen en_US en_US.UTF-8
-  sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-  export LANG=en_US.UTF-8
+  if ask "Install Jetson-specific tools?"; then
 
-  # Step 2 – Enable universe repo
-  info "Enabling universe repository..."
-  sudo apt -y install software-properties-common
-  sudo add-apt-repository -y universe
-
-  # Step 3 – Add ROS 2 GPG key + apt repo
-  info "Adding ROS 2 apt repository..."
-  sudo apt -y install curl gnupg lsb-release
-  sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-    -o /usr/share/keyrings/ros-archive-keyring.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-https://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
-    | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-
-  # Step 4 – Install
-  info "Running apt update..."
-  sudo apt update
-  info "Installing ${ROS_PKG} (this may take a while)..."
-  try_cmd sudo apt -y install "$ROS_PKG"
-
-  # Step 5 – Dev tools
-  if ask "Install ROS 2 dev tools? (colcon, rosdep, rosidl, etc.)"; then
-    try_cmd sudo apt -y install \
-      python3-colcon-common-extensions \
-      python3-rosdep \
-      python3-rosidl-generator-py \
-      ros-dev-tools
-    # Initialise rosdep
-    if [[ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]]; then
-      info "Initialising rosdep..."
-      try_cmd sudo rosdep init
+    # apt packages
+    if [[ ${#JETPACK_APT[@]} -gt 0 ]]; then
+      info "Installing apt packages..."
+      sudo apt -y install "${JETPACK_APT[@]}"
+      success "Jetson apt packages installed."
     fi
-    info "Updating rosdep..."
-    try_cmd rosdep update
-    success "ROS 2 dev tools installed."
-  fi
 
-  # Step 6 – DDS middleware (CycloneDDS — matches your .zshrc go2() config)
-  if ask "Install CycloneDDS middleware? (used in your go2() zshrc function)"; then
-    try_cmd sudo apt -y install "ros-${ROS_DISTRO}-rmw-cyclonedds-cpp"
-    success "CycloneDDS installed."
-  fi
+    # pip packages (system-wide so services like jtop can access them)
+    if [[ ${#JETPACK_PIP[@]} -gt 0 ]]; then
+      info "Installing pip packages (system-wide)..."
+      sudo pip3 install -U "${JETPACK_PIP[@]}"
+      success "Jetson pip packages installed."
+    fi
 
-  # Step 7 – Source setup in .zshrc (already handled by dotfiles, just confirm)
-  SETUP_LINE="source /opt/ros/${ROS_DISTRO}/setup.zsh"
-  if ! grep -qF "$SETUP_LINE" "$DOTFILES_DIR/.zshrc" 2>/dev/null; then
-    warn "Your dotfiles/.zshrc sources /opt/ros/humble/setup.zsh — update it to:"
-    warn "  source /opt/ros/${ROS_DISTRO}/setup.zsh"
+    # Enable jetson_stats service so jtop works without sudo
+    if python3 -c "import jetson_stats" 2>/dev/null || \
+       sudo pip3 show jetson-stats &>/dev/null; then
+      info "Enabling jetson_stats service (allows jtop without sudo)..."
+      try_cmd sudo systemctl enable jetson_stats
+      try_cmd sudo systemctl start jetson_stats
+      success "jetson_stats service enabled."
+      info "Run ${BOLD}jtop${RESET} to monitor your Jetson."
+    fi
+
   else
-    info ".zshrc already sources the correct ROS 2 setup file."
+    warn "Skipped Jetson tools."
   fi
-
-  success "ROS 2 ${ROS_DISTRO} installed."
-else
-  warn "Skipped ROS 2."
 fi
 
+# ── Step 10 – Network profile ─────────────────────────────────────────────────
+log "Step 10 · Network profile"
+
+# Collect profile names from the YAML
+mapfile -t NET_PROFILES < <(python3 - "$PACKAGES_YAML" <<'PYEOF'
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+profiles = cfg.get("network_profiles") or {}
+for name in profiles:
+    print(name)
+PYEOF
+)
+
+if [[ ${#NET_PROFILES[@]} -eq 0 ]]; then
+  info "No network_profiles defined in packages.yaml — skipping."
+else
+  echo -e "  ${BOLD}Available profiles (defined in packages.yaml):${RESET}"
+  for i in "${!NET_PROFILES[@]}"; do
+    PREVIEW=$(python3 - "$PACKAGES_YAML" "${NET_PROFILES[$i]}" <<'PYEOF'
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+p = (cfg.get("network_profiles") or {}).get(sys.argv[2], {})
+iface = p.get("interface", "?")
+mode  = "DHCP" if p.get("dhcp", True) else "static " + p.get("ip", "?")
+host  = p.get("hostname") or ""
+note  = "  hostname→" + host if host else ""
+print(f"{iface}  {mode}{note}")
+PYEOF
+)
+    echo -e "  ${CYAN}[$((i+1))]${RESET} ${BOLD}${NET_PROFILES[$i]}${RESET}  —  ${PREVIEW}"
+  done
+  echo -e "  ${CYAN}[0]${RESET} Skip"
+  echo ""
+  read -rp "  ${BOLD}Choose a profile [0-${#NET_PROFILES[@]}]: ${RESET}" NET_CHOICE
+  NET_CHOICE="${NET_CHOICE:-0}"
+
+  if [[ "$NET_CHOICE" != "0" ]] && \
+     [[ "$NET_CHOICE" =~ ^[0-9]+$ ]] && \
+     [[ "$NET_CHOICE" -ge 1 ]] && \
+     [[ "$NET_CHOICE" -le ${#NET_PROFILES[@]} ]]; then
+
+    CHOSEN="${NET_PROFILES[$((NET_CHOICE-1))]}"
+    info "Generating netplan config for profile: ${BOLD}${CHOSEN}${RESET}"
+
+    # Generate netplan YAML via Python and write it with sudo tee
+    NETPLAN_CONTENT=$(python3 - "$PACKAGES_YAML" "$CHOSEN" <<'PYEOF'
+import yaml, sys
+
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+
+p       = (cfg.get("network_profiles") or {})[sys.argv[2]]
+iface   = p["interface"]
+is_dhcp = p.get("dhcp", True)
+dns     = p.get("dns", [])
+search  = p.get("search_domains", [])
+mtu     = p.get("mtu")
+
+eth_cfg = {"dhcp4": is_dhcp}
+
+if not is_dhcp:
+    eth_cfg["addresses"] = [p["ip"]]
+    eth_cfg["routes"]    = [{"to": "default", "via": p["gateway"]}]
+
+if dns:
+    ns = {"addresses": dns}
+    if search:
+        ns["search"] = search
+    eth_cfg["nameservers"] = ns
+
+if mtu:
+    eth_cfg["mtu"] = int(mtu)
+
+netplan = {"network": {"version": 2, "ethernets": {iface: eth_cfg}}}
+
+print("# Generated by setup_dev.sh — edit packages.yaml to change profiles")
+print(yaml.dump(netplan, default_flow_style=False).rstrip())
+PYEOF
+)
+
+    echo "$NETPLAN_CONTENT" | sudo tee /etc/netplan/60-dev-setup.yaml > /dev/null
+    success "Netplan config written → /etc/netplan/60-dev-setup.yaml"
+
+    # Set hostname if the profile specifies one
+    CHOSEN_HOST=$(python3 - "$PACKAGES_YAML" "$CHOSEN" <<'PYEOF'
+import yaml, sys
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f)
+print((cfg.get("network_profiles") or {}).get(sys.argv[2], {}).get("hostname") or "")
+PYEOF
+)
+    if [[ -n "$CHOSEN_HOST" ]]; then
+      info "Setting hostname to: ${BOLD}${CHOSEN_HOST}${RESET}"
+      sudo hostnamectl set-hostname "$CHOSEN_HOST"
+      success "Hostname set to ${CHOSEN_HOST}."
+    fi
+
+    if ask "Apply network config now? (sudo netplan apply)"; then
+      try_cmd sudo netplan apply
+      success "Network profile '${CHOSEN}' applied."
+      warn "If you changed the IP of this SSH session, you may be disconnected."
+    else
+      warn "Config written but not applied. Run: sudo netplan apply"
+    fi
+
+  else
+    warn "Skipped network profile."
+  fi
+fi
 
 echo ""
 echo -e "${BOLD}${GREEN}╔════════════════════════════════════╗"
-echo -e "║        Setup Complete! 🎉          ║"
+echo -e "║        Setup Complete!           ║"
 echo -e "╚════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  ${BOLD}Next steps:${RESET}"
-echo -e "  1. ${CYAN}Log out and back in${RESET} so Zsh + Docker group take effect"
+echo -e "  1. ${CYAN}Log out and back in${RESET} so the Docker group takes effect"
 echo -e "     Or run ${CYAN}newgrp docker${RESET} in your current terminal for Docker immediately"
-if $HAS_NVIDIA; then
+if $HAS_NVIDIA && ! $IS_JETPACK; then
   echo -e "  2. ${YELLOW}Reboot${RESET} to activate NVIDIA drivers, then run: ${CYAN}nvidia-smi${RESET}"
 fi
-echo -e "  3. Open a new terminal – zsh plugins will auto-clone on first launch"
-echo -e "  4. Source ROS 2 manually in the current shell: ${CYAN}source /opt/ros/${ROS_DISTRO:-jazzy}/setup.zsh${RESET}"
-echo -e "  5. To edit your config later, just update files in:"
-echo -e "     ${CYAN}${DOTFILES_DIR}/${RESET} and re-run the deploy step"
+echo -e "  3. Restart Terminator to pick up the white theme config"
+if $IS_JETPACK; then
+  echo -e "  4. Run ${CYAN}jtop${RESET} to monitor CPU/GPU/memory/thermals on your Jetson"
+  echo -e "     Run ${CYAN}jetson_release${RESET} to view your L4T / Jetpack version details"
+fi
+echo -e "  5. To add/remove packages or network profiles, edit ${CYAN}${SCRIPT_DIR}/packages.yaml${RESET} and re-run"
 echo ""

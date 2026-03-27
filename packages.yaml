@@ -1,0 +1,87 @@
+base:
+  apt:
+    - build-essential
+    - curl
+    - wget
+    - ca-certificates
+    - gnupg
+    - lsb-release
+    - software-properties-common
+    - git
+    - python3
+    - python3-pip
+    - python3-venv
+    - python3-yaml        # required by setup_dev.sh to parse this file
+    - vim
+    - nano
+    - unzip
+    - zip
+    - tar
+    - tree
+    - htop
+    - jq
+    - ripgrep
+    - fd-find
+    - bat
+    - zoxide
+    - neovim
+
+# x86-only packages
+x86:
+  apt: []
+
+# Jetpack packages
+# These are only installed when /etc/nv_tegra_release is detected.
+jetpack:
+  apt:
+    - nvtop
+    - python3-smbus      # I2C tools (useful for sensor debugging on Jetson)
+    - i2c-tools          # i2cdetect, i2cdump, etc.
+    - v4l-utils          # camera / CSI debugging (v4l2-ctl, media-ctl)
+    - gstreamer1.0-tools # GStreamer CLI tools (gst-launch-1.0, gst-inspect-1.0)
+    - gstreamer1.0-plugins-base
+    - gstreamer1.0-plugins-good
+    - chromium-browser
+    # Uncomment if you use MIPI CSI cameras with Argus:
+    # - nvidia-l4t-gstreamer
+
+  pip:
+    - jetson-stats       # provides: jtop, jetson_release, jetson_config, jetson_swap
+
+# =============================================================================
+#  Network profiles
+#  The chosen profile is written to /etc/netplan/60-dev-setup.yaml and applied.
+#
+#  Fields per profile:
+#    interface:      network interface name  (e.g. eth0, ens3, enp0s3, wlan0)
+#    dhcp:           true  → DHCP (automatic IP)
+#                    false → static config (requires ip + gateway)
+#    ip:             static IP in CIDR notation (e.g. 192.168.1.100/24)
+#    gateway:        default route              (e.g. 192.168.1.1)
+#    dns:            list of DNS server IPs
+#    search_domains: list of DNS search domains (optional)
+#    hostname:       set system hostname; leave empty ("") to keep current
+#    mtu:            interface MTU in bytes     (optional — remove to use default)
+# =============================================================================
+network_profiles:
+
+  dhcp:
+    interface: eth0
+    dhcp: true
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    hostname: ""             # leave empty to keep the current hostname
+
+  robot_lab:
+    interface: eth0
+    dhcp: false
+    ip: 192.168.1.100/24
+    gateway: 192.168.1.1
+    dns:
+      - 192.168.1.1
+      - 8.8.8.8
+    search_domains:
+      - lab.local
+    hostname: jetson-01
+    mtu: 1500                # remove this line to use the interface default
